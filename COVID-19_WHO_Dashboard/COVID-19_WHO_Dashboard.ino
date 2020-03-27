@@ -11,7 +11,7 @@
 #define SSID_NAME "YourAP"
 #define SSID_PASSWORD "PleaseInputYourPasswordHere"
 
-#define UPDATE_INTERVAL 3600000L // in ms, 1 hour
+#define UPDATE_INTERVAL 3600000UL // in ms, 1 hour
 
 /* URL: WHO Novel Coronavirus (COVID-19) Situation Dashboard */
 const char *who_dashboard_url = "https://experience.arcgis.com/experience/685d0ace521648f8a5beeeee1b9125cd";
@@ -122,7 +122,7 @@ Arduino_DataBus *bus = new Arduino_HWSPI(TFT_DC, TFT_CS);
 // Arduino_ILI9225 *gfx = new Arduino_ILI9225(bus, TFT_RST);
 
 // ILI9341 LCD 240x320
-Arduino_ILI9341 *gfx = new Arduino_ILI9341(bus, TFT_RST, 2  /* rotation */);
+Arduino_ILI9341 *gfx = new Arduino_ILI9341(bus, TFT_RST, 2 /* rotation */);
 
 // ILI9481 LCD 320x480
 // Arduino_ILI9481_18bit *gfx = new Arduino_ILI9481_18bit(bus, TFT_RST);
@@ -192,11 +192,6 @@ Arduino_ILI9341 *gfx = new Arduino_ILI9341(bus, TFT_RST, 2  /* rotation */);
 #if defined(ESP32)
 #include <WiFi.h>
 #include <HTTPClient.h>
-#else // ESP8266
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#endif
-
 // HTTPS howto: https://techtutorialsx.com/2017/11/18/esp32-arduino-https-get-request/
 const char *arcgis_root_ca =
     "-----BEGIN CERTIFICATE-----\n"
@@ -222,11 +217,16 @@ const char *arcgis_root_ca =
     "vEsXCS+0yx5DaMkHJ8HSXPfqIbloEpw8nL+e/IBcm2PN7EeqJSdnoDfzAIJ9VNep\n"
     "+OkuE6N36B9K\n"
     "-----END CERTIFICATE-----\n";
-
-static HTTPClient http;
+#else // ESP8266
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecureBearSSL.h>
+std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
+const uint8_t fingerprint[20] = {0x70, 0x58, 0x0E, 0x78, 0x0C, 0x9D, 0x72, 0x75, 0x50, 0x61, 0x9D, 0x3E, 0x4E, 0xFD, 0xB2, 0x1D, 0x64, 0xD1, 0xE9, 0x1E};
+#endif
 
 /* static variables */
-static uint32_t last_rss_update_ms = 0;
+static unsigned long last_rss_update_ms = 0;
 static uint16_t banner_color;
 static uint16_t font_color_01;
 static uint16_t font_color_02;
@@ -241,13 +241,15 @@ static int16_t w, h, pw, ph, y_offset;
 const GFXfont *f1, *f2, *f3, *f4;
 static int16_t fh1, fo1, fw2, fh2, fo2, fw3, fh3, fo3, fw4, fh4, fo4;
 
-String getHttpsReturnStr(const char *url, const char *root_ca)
+String getHttpsReturnStr(const char *url)
 {
   HTTPClient https;
   String result;
 
+#if defined(ESP32)
+
   Serial.printf("[HTTPS] begin...\n");
-  https.begin(url, root_ca);
+  https.begin(url, arcgis_root_ca);
 
   Serial.printf("[HTTPS] GET...\n");
   int httpCode = https.GET();
@@ -268,10 +270,50 @@ String getHttpsReturnStr(const char *url, const char *root_ca)
     return result;
   }
 
+#else // ESP8266
+
+  ESP.wdtDisable();
+
+  client->setFingerprint(fingerprint);
+
+  Serial.print("[HTTPS] begin...\n");
+  if (!https.begin(*client, url))
+  { // HTTPS
+    https.end();
+    return result;
+  }
+
+  Serial.print("[HTTPS] GET...\n");
+  // start connection and send HTTP header
+  int httpCode = https.GET();
+
+  if (httpCode <= 0)
+  {
+    Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+    https.end();
+    return result;
+  }
+  // HTTP header has been send and Server response header has been handled
+  Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+
+  // file found at server
+  if (httpCode != HTTP_CODE_OK && httpCode != HTTP_CODE_MOVED_PERMANENTLY)
+  {
+    Serial.printf("[HTTPS] Not OK!\n");
+    https.end();
+    return result;
+  }
+
+  ESP.wdtEnable(1000);
+
+#endif
+
   delay(100);
 
   result = https.getString();
   https.end();
+  // Serial.println(result);
+
   return result;
 }
 
@@ -321,77 +363,78 @@ void print_middle(int16_t x, int16_t y, int16_t fw, char prefix, int n)
 */
 bool updateFigures()
 {
-  getHttpsReturnStr(who_global_url, arcgis_root_ca);
+  //  getHttpsReturnStr(who_dashboard_url);
 
-  String json = getHttpsReturnStr(who_global_url, arcgis_root_ca);
+  String json = getHttpsReturnStr(who_global_url);
   // Serial.printf("return: %s\n", json.c_str());
 
   // global confirmed cases count
-  int key_idx = json.indexOf("features");
-  key_idx = json.indexOf("cum_conf", key_idx);
+  int key_idx = json.indexOf(F("features"));
+  key_idx = json.indexOf(F("cum_conf"), key_idx);
   int val_start_idx = json.indexOf(':', key_idx) + 1;
-  int val_end_idx = json.indexOf(",", val_start_idx);
+  int val_end_idx = json.indexOf(',', val_start_idx);
   int global_cum_conf = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("global_cum_conf: %d\n", global_cum_conf);
   // global death cases count
-  key_idx = json.indexOf("cum_death", val_end_idx);
+  key_idx = json.indexOf(F("cum_death"), val_end_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf("}", val_start_idx);
+  val_end_idx = json.indexOf('}', val_start_idx);
   int global_cum_death = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("global_cum_death: %d\n", global_cum_death);
 
-  json = getHttpsReturnStr(who_adm0_url, arcgis_root_ca);
+  json = getHttpsReturnStr(who_adm0_url);
   // Serial.printf("return: %s\n", json.c_str());
 
   // adm0 confirmed cases count
-  key_idx = json.indexOf("features");
-  key_idx = json.indexOf("cum_conf", key_idx);
+  key_idx = json.indexOf(F("features"));
+  key_idx = json.indexOf(F("cum_conf"), key_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf(",", val_start_idx);
+  val_end_idx = json.indexOf(',', val_start_idx);
   int adm0_cum_conf = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm0_cum_conf: %d\n", adm0_cum_conf);
   // adm0 death cases count
-  key_idx = json.indexOf("cum_death", val_end_idx);
+  key_idx = json.indexOf(F("cum_death"), val_end_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf("}", val_start_idx);
+  val_end_idx = json.indexOf('}', val_start_idx);
   int adm0_cum_death = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm0_cum_death: %d\n", adm0_cum_death);
 
-  json = getHttpsReturnStr(who_adm0_new_conf_url, arcgis_root_ca);
+  json = getHttpsReturnStr(who_adm0_new_conf_url);
   // Serial.printf("return: %s\n", json.c_str());
 
   // adm0 new confirmed cases count
-  key_idx = json.indexOf("features");
-  key_idx = json.indexOf("NewCase", key_idx);
+  key_idx = json.indexOf(F("features"));
+  key_idx = json.indexOf(F("NewCase"), key_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf(",", val_start_idx);
+  val_end_idx = json.indexOf(',', val_start_idx);
   int adm0_new_conf = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm0_new_conf: %d\n", adm0_new_conf);
 
-  json = getHttpsReturnStr(who_adm1_url, arcgis_root_ca);
+  json = getHttpsReturnStr(who_adm1_url);
   // Serial.printf("return: %s\n", json.c_str());
 
   // adm1 new confirmed cases count
-  key_idx = json.indexOf("features");
-  key_idx = json.indexOf("new_conf", key_idx);
+  key_idx = json.indexOf(F("features"));
+  key_idx = json.indexOf(F("new_conf"), key_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf(",", val_start_idx);
+  val_end_idx = json.indexOf(',', val_start_idx);
   int adm1_new_conf = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm1_new_conf: %d\n", adm1_new_conf);
   // adm1 confirmed cases count
-  key_idx = json.indexOf("cum_conf", key_idx);
+  key_idx = json.indexOf(F("cum_conf"), key_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf(",", val_start_idx);
+  val_end_idx = json.indexOf(',', val_start_idx);
   int adm1_cum_conf = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm1_cum_conf: %d\n", adm1_cum_conf);
   // adm0 death cases count
-  key_idx = json.indexOf("cum_death", val_end_idx);
+  key_idx = json.indexOf(F("cum_death"), val_end_idx);
   val_start_idx = json.indexOf(':', key_idx) + 1;
-  val_end_idx = json.indexOf("}", val_start_idx);
+  val_end_idx = json.indexOf('}', val_start_idx);
   int adm1_cum_death = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm1_cum_death: %d\n", adm1_cum_death);
 
   // print data
+  Serial.println("print data");
   gfx->setFont(f3);
   y_offset = 4 + fh1 + fh2 + 4 + ((ph - fo3) / 2) + fo3;
   gfx->setTextColor(WHITE, panel_color_01);
@@ -423,6 +466,8 @@ bool updateFigures()
   gfx->setTextColor(WHITE, panel_color_05);
   print_middle(4, y_offset, fw4, '+', adm1_new_conf);
 
+  Serial.println("updateFigures complete");
+
   return true;
 }
 
@@ -431,17 +476,18 @@ void setup()
 #if defined(ESP32)
   disableCore0WDT();
   disableCore1WDT();
-  Serial.begin(115200);
-#else // ESP8266
-  Serial.begin(74880);
 #endif
-  Serial.println("Novel Coronavirus (COVID-19) Situation WHO Dashboard");
+
+  Serial.begin(115200);
+
+  Serial.println(F("Novel Coronavirus (COVID-19) Situation WHO Dashboard"));
 
   // Connect WiFi
-  Serial.println("Connection WiFi");
+  Serial.println(F("Connect WiFi"));
   WiFi.begin(SSID_NAME, SSID_PASSWORD);
 
   // Initialize display
+  Serial.println(F("Initialize display"));
   gfx->begin();
   gfx->fillScreen(BLACK);
 
@@ -471,7 +517,7 @@ void setup()
 
   if (f1)
   {
-    fh1 = f1->yAdvance;
+    fh1 = pgm_read_byte(&f1->yAdvance);
     fo1 = fh1 * 2 / 3;
   }
   else
@@ -481,8 +527,8 @@ void setup()
   }
   if (f2)
   {
-    fw2 = f2->glyph->xAdvance;
-    fh2 = f2->yAdvance;
+    fw2 = pgm_read_byte(&f2->glyph->xAdvance);
+    fh2 = pgm_read_byte(&f2->yAdvance);
     fo2 = fh2 * 2 / 3;
   }
   else
@@ -493,8 +539,8 @@ void setup()
   }
   if (f4)
   {
-    fw3 = f3->glyph->xAdvance;
-    fh3 = f3->yAdvance;
+    fw3 = pgm_read_byte(&f3->glyph->xAdvance);
+    fh3 = pgm_read_byte(&f3->yAdvance);
     fo3 = fh3 * 2 / 3;
   }
   else
@@ -505,8 +551,8 @@ void setup()
   }
   if (f4)
   {
-    fw4 = f4->glyph->xAdvance;
-    fh4 = f4->yAdvance;
+    fw4 = pgm_read_byte(&f4->glyph->xAdvance);
+    fh4 = pgm_read_byte(&f4->yAdvance);
     fo4 = fh4 * 2 / 3;
   }
   else
@@ -536,8 +582,9 @@ void setup()
   gfx->setFont(f1);
   y_offset = 4 + fo1;
   gfx->setCursor(0, y_offset);
-  gfx->println(" COVID-19 Situation");
+  gfx->println(F(" COVID-19 Situation"));
 
+  // print section names
   gfx->setFont(f2);
   y_offset = 4 + fh1 + 3 + fo2;
   gfx->setTextColor(font_color_01, BLACK);
@@ -548,14 +595,15 @@ void setup()
   y_offset += 4;
   gfx->setTextColor(font_color_02, BLACK);
   gfx->setCursor(4, y_offset);
-  gfx->print("China");
+  gfx->print(F("China"));
   y_offset += fh2;
   y_offset += ph;
   y_offset += 4;
   gfx->setTextColor(font_color_03, BLACK);
   gfx->setCursor(4, y_offset);
-  gfx->print("Hong Kong SAR");
+  gfx->print(F("Hong Kong SAR"));
 
+  // print panels
   y_offset = 4 + fh1 + 4 + fh2;
   gfx->fillRoundRect(4, y_offset, pw, ph, 8, panel_color_01);
   gfx->fillRoundRect(8 + pw, y_offset, pw, ph, 8, panel_color_02);
@@ -570,32 +618,33 @@ void setup()
   gfx->fillRoundRect(4, y_offset, pw, ph, 8, panel_color_05);
   gfx->fillRoundRect(8 + pw, y_offset, pw, ph, 8, panel_color_06);
 
+  // print panel labels
   gfx->setFont(f4);
   y_offset = 4 + fh1 + 4 + fh2 + 4 + fo4;
   gfx->setTextColor(LIGHTGREY, panel_color_01);
   gfx->setCursor(10, y_offset);
-  gfx->print("Confirm");
+  gfx->print(F("Confirm"));
   gfx->setTextColor(LIGHTGREY, panel_color_02);
   gfx->setCursor(14 + pw, y_offset);
-  gfx->print("Death");
+  gfx->print(F("Death"));
   y_offset += fh2;
   y_offset += ph;
   y_offset += 4;
   gfx->setTextColor(LIGHTGREY, panel_color_03);
   gfx->setCursor(10, y_offset);
-  gfx->print("Confirm");
+  gfx->print(F("Confirm"));
   gfx->setTextColor(LIGHTGREY, panel_color_04);
   gfx->setCursor(14 + pw, y_offset);
-  gfx->print("Death");
+  gfx->print(F("Death"));
   y_offset += fh2;
   y_offset += ph;
   y_offset += 4;
   gfx->setTextColor(LIGHTGREY, panel_color_05);
   gfx->setCursor(10, y_offset);
-  gfx->print("Confirm");
+  gfx->print(F("Confirm"));
   gfx->setTextColor(LIGHTGREY, panel_color_06);
   gfx->setCursor(14 + pw, y_offset);
-  gfx->print("Death");
+  gfx->print(F("Death"));
 
   // Turn on display backlight after all drawings ready
 #ifdef TFT_BL
@@ -606,7 +655,8 @@ void setup()
 
 void loop()
 {
-  if ((!last_rss_update_ms) || (millis() - last_rss_update_ms) > UPDATE_INTERVAL)
+  Serial.printf("last_rss_update_ms: %d, millis(): %d\n", last_rss_update_ms, millis());
+  if ((last_rss_update_ms == 0) || ((millis() - last_rss_update_ms) > UPDATE_INTERVAL))
   {
     if (WiFi.status() == WL_CONNECTED)
     {
@@ -639,8 +689,6 @@ void loop()
   esp_sleep_enable_timer_wakeup(UPDATE_INTERVAL * 1000L); // milliseconds to nanoseconds
   esp_light_sleep_start();
 #else // ESP8266
-  wifi_fpm_set_sleep_type(MODEM_SLEEP_T);
-  wifi_fpm_open();
-  wifi_fpm_do_sleep(UPDATE_INTERVAL * 1000L); // milliseconds to nanoseconds
+  delay(100); // modem sleep
 #endif
 }
