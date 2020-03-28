@@ -16,8 +16,9 @@
 /* URL: WHO Novel Coronavirus (COVID-19) Situation Dashboard */
 const char *who_dashboard_url = "https://experience.arcgis.com/experience/685d0ace521648f8a5beeeee1b9125cd";
 const char *who_global_url = "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services/Cases_by_country_pt_V3/FeatureServer/0/query?where=1%3D1&returnGeometry=false&outStatistics=%5B%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22cum_conf%22%2C%22outStatisticFieldName%22%3A%22cum_conf%22%7D%2C%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22cum_death%22%2C%22outStatisticFieldName%22%3A%22cum_death%22%7D%5D&cacheHint=true&f=json";
+const char *who_global_newcase_url = "https://services.arcgis.com/5T5nSi527N4F7luB/ArcGIS/rest/services/COVID_19_HistoricCasesByCountry(pt)View/FeatureServer/0/query?where=1%3D1&returnGeometry=false&orderByFields=DateOfDataEntry+desc&groupByFieldsForStatistics=DateOfDataEntry&outStatistics=%5B%7B%22statisticType%22%3A%22sum%22%2C%22onStatisticField%22%3A%22NewCase%22%2C%22outStatisticFieldName%22%3A%22NewCase%22%7D%5D%0D%0A&resultOffset=&resultRecordCount=1&cacheHint=true&f=json";
 const char *who_adm0_url = "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services/Cases_by_country_pt_V3/FeatureServer/0/query?where=ADM0_NAME%3D%27China%27&outFields=cum_conf%2Ccum_death&returnGeometry=false&cacheHint=true&f=json";
-const char *who_adm0_new_conf_url = "https://services.arcgis.com/5T5nSi527N4F7luB/ArcGIS/rest/services/COVID_19_HistoricCasesByCountry(pt)View/FeatureServer/0/query?where=ADM0_NAME%3D%27China%27&outFields=NewCase&returnGeometry=false&orderByFields=DateOfDataEntry+desc&resultRecordCount=1&cacheHint=true&f=json";
+const char *who_adm0_newcase_url = "https://services.arcgis.com/5T5nSi527N4F7luB/ArcGIS/rest/services/COVID_19_HistoricCasesByCountry(pt)View/FeatureServer/0/query?where=ADM0_NAME%3D%27China%27&outFields=NewCase&returnGeometry=false&orderByFields=DateOfDataEntry+desc&resultRecordCount=1&cacheHint=true&f=json";
 const char *who_adm1_url = "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services/COVID_19_CasesByAdm1(pt)_VIEW/FeatureServer/0/query?where=ADM1_NAME%3D%27HONG+KONG+SAR%27&outFields=new_conf%2Ccum_conf%2Ccum_death&returnGeometry=false&cacheHint=true&f=json";
 
 #define HTTP_TIMEOUT 60000 // in ms, wait a while for server processing
@@ -343,17 +344,19 @@ void print_middle(int16_t x, int16_t y, int16_t fw, char prefix, int n)
   }
   if (n > 1000000)
   {
-    gfx->print(n / 1000000);
-    gfx->print(',');
+    int n1 = n / 1000000;
     n %= 1000000;
-  }
-  if (n > 1000)
+    int n2 = n / 1000;
+    int n3 = n % 1000;
+    gfx->printf("%d,%03d,%03d", n1, n2, n3);
+  } else if (n > 1000)
   {
-    gfx->print(n / 1000);
-    gfx->print(',');
-    n %= 1000;
+    int n1 = n / 1000;
+    int n2 = n % 1000;
+    gfx->printf("%d,%03d", n1, n2);
+  } else {
+    gfx->print(n);
   }
-  gfx->print(n);
 }
 
 /**
@@ -382,6 +385,17 @@ bool updateFigures()
   int global_cum_death = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("global_cum_death: %d\n", global_cum_death);
 
+  json = getHttpsReturnStr(who_global_newcase_url);
+  // Serial.printf("return: %s\n", json.c_str());
+
+  // global new confirmed cases count
+  key_idx = json.indexOf(F("features"));
+  key_idx = json.indexOf(F("NewCase"), key_idx);
+  val_start_idx = json.indexOf(':', key_idx) + 1;
+  val_end_idx = json.indexOf(',', val_start_idx);
+  int global_new_conf = json.substring(val_start_idx, val_end_idx).toInt();
+  Serial.printf("global_new_conf: %d\n", global_new_conf);
+
   json = getHttpsReturnStr(who_adm0_url);
   // Serial.printf("return: %s\n", json.c_str());
 
@@ -399,7 +413,7 @@ bool updateFigures()
   int adm0_cum_death = json.substring(val_start_idx, val_end_idx).toInt();
   Serial.printf("adm0_cum_death: %d\n", adm0_cum_death);
 
-  json = getHttpsReturnStr(who_adm0_new_conf_url);
+  json = getHttpsReturnStr(who_adm0_newcase_url);
   // Serial.printf("return: %s\n", json.c_str());
 
   // adm0 new confirmed cases count
@@ -457,7 +471,12 @@ bool updateFigures()
   print_middle(8 + pw, y_offset, fw3, 0, adm1_cum_death);
 
   gfx->setFont(f4);
-  y_offset = 4 + fh1 + ((fh2 + ph + 2) * 2) - (ph / 5) + fo4;
+  y_offset = 4 + fh1 + 2 + fh2 + ph - (ph / 5) + fo4;
+  gfx->setTextColor(WHITE, panel_color_01);
+  print_middle(4, y_offset, fw4, '+', global_new_conf);
+  y_offset += fh2;
+  y_offset += ph;
+  y_offset += 2;
   gfx->setTextColor(WHITE, panel_color_03);
   print_middle(4, y_offset, fw4, '+', adm0_new_conf);
   y_offset += fh2;
