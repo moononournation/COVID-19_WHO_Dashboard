@@ -320,42 +320,45 @@ String getHttpsReturnStr(const char *url)
 
 void print_middle(int16_t x, int16_t y, int16_t fw, char prefix, int n)
 {
+  int t = n;
+  int d = 0;
+  while (t > 1000)
+  {
+    t /= 1000;
+    d += 4;
+  }
+  while (t)
+  {
+    t /= 10;
+    ++d;
+  }
+  if (n > 1000000) {
+    d -= 3;
+  }
+  x += ((pw - (d * fw)) / 2);
+  if (prefix)
+  {
+    x -= fw;
+  }
+  gfx->setCursor(x, y);
+  if (prefix)
+  {
+    gfx->print(prefix);
+  }
   if (n > 1000000)
   {
-    gfx->print(n);
-  }
-  else
+    int n1 = n / 1000000;
+    n %= 1000000;
+    int n2 = n / 1000;
+    int n3 = n % 1000;
+    gfx->printf("%d,%03dk", n1, n2, n3);
+  } else if (n > 1000)
   {
-    int t = n;
-    int d = 0;
-    while (t > 1000)
-    {
-      t /= 1000;
-      d += 4;
-    }
-    while (t)
-    {
-      t /= 10;
-      ++d;
-    }
-    x += ((pw - (d * fw)) / 2);
-    if (prefix)
-    {
-      x -= fw;
-    }
-    gfx->setCursor(x, y);
-    if (prefix)
-    {
-      gfx->print(prefix);
-    }
-    if (n > 1000)
-    {
-      int n1 = n / 1000;
-      int n2 = n % 1000;
-      gfx->printf("%d,%03d", n1, n2);
-    } else {
-      gfx->print(n);
-    }
+    int n1 = n / 1000;
+    int n2 = n % 1000;
+    gfx->printf("%d,%03d", n1, n2);
+  } else {
+    gfx->print(n);
   }
 }
 
